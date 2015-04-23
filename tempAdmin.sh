@@ -28,7 +28,7 @@ echo '<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.
 echo '<plist version="1.0">' >> $launchDaemon
 echo '<dict>' >> $launchDaemon
 echo '       <key>Label</key>' >> $launchDaemon
-echo '        <string>com.jpmc.removeadmin</string>' >> $launchDaemon
+echo '        <string>com.sneakypockets.removeadmin</string>' >> $launchDaemon
 echo '        <key>LaunchOnlyOnce</key>' >> $launchDaemon
 echo '        <true/>' >> $launchDaemon
 echo '        <key>RunAtLoad</key>' >> $launchDaemon
