@@ -1,4 +1,5 @@
 #! /bin/bash
+#This was written to be used with GeekTool and display network connections on my desktop
 connection=false
 services=$(networksetup -listallnetworkservices)
 while read service; do
