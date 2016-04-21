@@ -1,4 +1,10 @@
 #!/bin/sh
+##########################
+#  WARNING
+#This requires alerter from https://github.com/vjeantet/alerter
+#
+##########################
+
 # Check if the users password will expire in X days
 
 # defines when to start prompting the user
