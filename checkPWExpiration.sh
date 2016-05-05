@@ -1,35 +1,49 @@
 #!/bin/sh
+
 ##########################
-#  WARNING
-#This requires alerter from https://github.com/vjeantet/alerter
+#
+#  This relies on alerter from https://github.com/vjeantet/alerter
 #
 ##########################
 
-# Check if the users password will expire in X days
+
+# Warn the user if their password expires in less than X days
 
 # defines when to start prompting the user
-promptWhenLessThan=90
+promptWhenLessThan=14
 
-# get the current username to read their last password change date
+# get the current username to read their pwpolicy and last password change date
 username=$( python -c 'from SystemConfiguration import SCDynamicStoreCopyConsoleUser; import sys; username = (SCDynamicStoreCopyConsoleUser(None, None, None) or [None])[0]; username = [username,""][username in [u"loginwindow", None, u""]]; sys.stdout.write(username + "\n");' )
 
-# write profiles out to temp so we can find the maximum age value
-profiles -Cv -o /tmp/profiles.plist
+# grab the number of days until a password expires from the users policy, can be null
+pwExpirationDaysUser=$(pwpolicy -getaccountpolicies -u "$username" | grep -A1 "<key>policyAttributeExpiresEveryNDays</key>" | tail -n1 | sed 's/<integer>//g' | sed 's/<\/integer>//g' | tr -d '[[:space:]]')
 
-# search for and capture the max age from the profile
-maxPINAgeDays=$(grep -A1 maxPINAgeInDays /tmp/profiles.plist | tail -n1 | sed 's/<integer>//g' | sed 's/<\/integer>//g' | tr -d '[[:space:]]')
+# grab the number of days until a password expires from any global policy, can be null
+pwExpirationDaysGlobal=$(pwpolicy -getaccountpolicies | grep -A1 "<key>policyAttributeExpiresEveryNDays</key>" | tail -n1 | sed 's/<integer>//g' | sed 's/<\/integer>//g' | tr -d '[[:space:]]')
 
-# if we can't find the max age in the profiles, assume 90 days.
-if [ "$maxPINAgeDays" == "" ]; then	
-	maxPINAgeDays=90
+if [ -z $pwExpirationDaysUser ] && [ -z $pwExpirationDaysGlobal ]; then
+# both are null, no expiration found
+	logger -t "checkPWExpiration" "Cannot find the pwExpirationDays from pwpolicy."
+	exit 1
+elif [ -z $pwExpirationDaysUser ]; then
+# user expiration is null, use global
+	pwExpirationDays=$pwExpirationDaysGlobal
+elif [ -z $pwExpirationDaysGlobal ]; then
+# global expiration is null, use user
+	pwExpirationDays=$pwExpirationDaysUser
+else
+# both have a value, use the smaller.  If equal, it doesn't matter, so use User.
+	if [ $pwExpirationDaysUser -le $pwExpirationDaysGlobal ]; then
+		pwExpirationDays=$pwExpirationDaysUser
+	else
+		pwExpirationDays=$pwExpirationDaysGlobal
+	fi
 fi
 
-# Get the users password policy data from the local node using dscl and write it to a file
-dscl . read /Users/"$username" dsAttrTypeNative:accountPolicyData | sed '1d' > /tmp/pwdpolicy.plist
+# Find when the password was last changed and trim to an integer (Apple stores this as a decimal, which Bash doesn't handle)
+pwdLastSet=$(dscl . read /Users/"$username" dsAttrTypeNative:accountPolicyData | grep -A1 "<key>passwordLastSetTime</key>" | tail -n1 | sed 's/<real>//g' | sed 's/<\/real>//g' | tr -d '[[:space:]]' | cut -d"." -f 1)
 
-# Find when the password was last changed and trim to an integer
-pwdLastSet=$(defaults read /tmp/pwdpolicy.plist passwordLastSetTime | cut -d"." -f 1)
-# Find the current date
+# Find the current date in seconds 
 currentUnixTime=$( date +"%s" )
 
 # Convert both times from seconds to days
@@ -40,11 +54,14 @@ currentTimeDays=$( expr $currentUnixTime / 60 / 60 / 24 )
 passwordResetDaysAgo=$( expr $currentTimeDays - $passwordSetTimeDays )
 
 # Which leaves this many days to make a change
-passwordDaysLeft=$( expr $maxPINAgeDays - $passwordResetDaysAgo )
+passwordDaysLeft=$( expr $pwExpirationDays - $passwordResetDaysAgo )
+
+# log how many days left for testing/checking
+logger -t "checkPWExpiration" "User $username has $passwordDaysLeft to change their password."
 
 # If the days left is less than or equal to our cutoff, prompt the user
 if [ $passwordDaysLeft -le $promptWhenLessThan ]; then
-# 	buttonReturned=`/usr/bin/osascript <<EOT
+# 	buttonReturned=`/usr/bin/osascript <<EOT  #this is the applescript way to do it, but I like the alerter notification better
 # 	tell application "SystemUIServer"
 # 		activate
 # 		with timeout of 600 seconds
@@ -64,13 +81,9 @@ if [ $passwordDaysLeft -le $promptWhenLessThan ]; then
 			activate
 			set the current pane to pane id "com.apple.preferences.users"
 		end tell
-# 		tell application "System Events"
-#			tell process "System Preferences"
-# 				click button "Change Password…" of tab group 1 of window "Users & Groups"
-#  			end tell
-#		end tell
-EOT
+		display dialog "Click the Change Password button for your account" # incase users are unsure what to do...
 
+EOT
 	#if they wait, warn them again to do it soon
 	else
 	/usr/bin/osascript <<EOT
@@ -81,13 +94,6 @@ EOT
 		end timeout
 	end tell
 EOT
-	#/usr/local/bin/alerter -message "Please change your password soon!" -title "Password Expiration"
-
 	fi
-
 fi
-
-# clean up after ourselves
-rm /tmp/pwdpolicy.plist
-rm /tmp/profiles.plist
 
